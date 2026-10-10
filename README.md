@@ -1,180 +1,128 @@
-# ResearchFinderAI
+# ResearchFinderAI 🔎
 
-An AI-assisted research paper discovery and analysis project with a web-based frontend and Python backend.
+**Discover Research Papers. Explore Ideas. Find Your Next Research Direction.**
 
-## Features
+ResearchFinderAI is an AI-assisted research discovery tool designed to help students, researchers, and academics explore research topics and discover relevant academic papers through a simple web interface.
 
-- Research paper discovery and analysis
-- React + Vite frontend
-- Python backend
-- Groq API integration, if configured
-- Windows startup using `run.bat`
+Instead of manually searching through hundreds of papers, ResearchFinderAI aims to make the research discovery process more organized and accessible.
 
-## 1. Requirements
+## ✨ What Can You Do With ResearchFinderAI?
 
-Install the following software:
+- **Explore Research Topics:** Start exploring papers related to your research interests.
+- **Discover Relevant Papers:** Find potentially useful research papers for your chosen topic.
+- **AI-Assisted Analysis:** Use AI-powered analysis features available in the application to help review research information.
+- **Simple Web Interface:** Interact with the application through its frontend.
+- **Easy Local Setup:** Run the project on your own computer using the provided startup script.
 
-| Software | Download |
-|---|---|
-| Python | https://www.python.org/downloads/ |
-| Node.js (LTS) | https://nodejs.org/en/download |
-| Git | https://git-scm.com/downloads |
-| Groq API key | https://console.groq.com/keys |
+*Available features depend on the current implementation and configuration of the project.*
 
-During Python installation on Windows, enable **Add Python to PATH**.
+## 👥 Who Is It For?
 
-Verify the installations in PowerShell:
+ResearchFinderAI is designed for:
 
-```powershell
-python --version
-node --version
-npm --version
-git --version
-```
+- University students looking for research ideas.
+- Undergraduate and postgraduate researchers exploring a new field.
+- Academics who want to investigate relevant literature.
+- Anyone beginning a research project and looking for related papers.
 
-If `python` is not recognized, try `py --version`.
+## 🚀 Getting Started
 
-## 2. Configure the Groq API Key
+### 1. Download the Project
 
-If your research workflow uses Groq:
+First, install Git if you do not already have it.
 
-1. Visit https://console.groq.com/
-2. Sign in or create an account.
-3. Open https://console.groq.com/keys
-4. Create an API key and store it securely.
-5. Configure the key using the method expected by the backend code.
+Download Git: https://git-scm.com/downloads
 
-**Security:** Never commit API keys, passwords, or secret `.env` files to GitHub. Do not put secret API keys in frontend code.
+Open a terminal and run:
 
-## 3. Download the Repository
-
-Open PowerShell in the directory where you want to store the project:
-
-```powershell
+```bash
 git clone https://github.com/mdmotalebmiraz7/ResearchFinderAI.git
 cd ResearchFinderAI
 ```
 
-## 4. Install Backend Dependencies
+Alternatively, open the repository on GitHub and select **Code → Download ZIP**.
 
-From the project root directory, run:
+### 2. Install the Required Software
 
-```powershell
-python -m venv backend\venv
-backend\venv\Scripts\python.exe -m pip install --upgrade pip
-backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-```
+Install the following tools:
 
-These commands assume the repository contains `backend\requirements.txt`.
+| Software | Purpose | Download |
+|---|---|---|
+| Python | Runs the backend | https://www.python.org/downloads/ |
+| Node.js (LTS) | Runs the frontend tools | https://nodejs.org/en/download |
+| Git | Downloads and updates the project | https://git-scm.com/downloads |
 
-## 5. Install Frontend Dependencies
+**Windows users:** During Python installation, enable **Add Python to PATH**.
 
-From the project root directory:
+### 3. Configure the AI Service
 
-```powershell
-cd frontend
-npm install
-cd ..
-```
+If your version of ResearchFinderAI uses Groq, you may need a Groq API key.
 
-This installs the packages defined in `frontend\package.json`.
+1. Create an account or sign in at https://console.groq.com/
+2. Visit https://console.groq.com/keys
+3. Create an API key.
+4. Configure it according to the application's instructions.
 
-## 6. Run the Application
+Keep your API key private. Never share it publicly or upload it to GitHub.
 
-From the project root directory, run:
+### 4. Start ResearchFinderAI
 
-```powershell
-.\run.bat
-```
+Open the project folder and double-click:
 
-The startup script is designed to check dependencies, install missing packages, start the backend and frontend in separate terminal windows, and open the frontend in your browser.
+`run.bat`
 
-Typical local addresses:
+The startup script is intended to prepare the required dependencies, launch the backend and frontend, and open the application in your default browser.
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8000
+If the browser does not open automatically, try:
 
-The actual addresses depend on the project configuration. Keep both service windows open while using the application.
+http://localhost:5173
 
-## 7. Run the Services Manually
+Keep the backend and frontend terminal windows open while using the application.
 
-If `run.bat` does not work, start each service separately.
+## 💻 System Requirements
 
-### Backend
+You will need:
 
-Open a PowerShell window in the project root:
+- A computer running Windows, or a compatible environment with the required tools installed.
+- An internet connection for initial setup, downloading dependencies, and any online research or AI services.
+- A valid API key if your selected AI features require one.
 
-```powershell
-cd backend
-.\venv\Scripts\Activate.ps1
-python -m uvicorn research_finder:app --host 127.0.0.1 --port 8000
-```
+Actual performance depends on your computer, network connection, and the services used by the application.
 
-This assumes `backend\research_finder.py` contains a FastAPI application named `app`. If the module or application object has a different name, update the command accordingly.
+## ❓ Troubleshooting
 
-### Frontend
+**The application does not start**
 
-Open a second PowerShell window in the project root:
+Make sure Python and Node.js are installed correctly, then try running `run.bat` again. Check the terminal windows for error messages.
 
-```powershell
-cd frontend
-npm run dev
-```
+**The frontend does not open**
 
-Open the URL printed by Vite in your browser.
+Try opening http://localhost:5173 manually and confirm that the frontend terminal reports a successful startup.
 
-## 8. Update the Project
+**AI features are not working**
 
-To download the latest committed changes:
+Check your API key configuration, internet connection, and the availability of the configured AI model.
 
-```powershell
-git pull origin main
-```
+**Installation fails**
 
-To upload your changes:
+Check the error message and confirm that the project's dependencies have been installed successfully.
 
-```powershell
-git status
-git add README.md run.bat
-git commit -m "Update project documentation and startup script"
-git push origin main
-```
+## 🔒 Privacy and API Keys
 
-If you changed other project files, add those files separately as needed.
+Keep all secret credentials private. Do not commit API keys, passwords, or private environment files to a public repository.
 
-Before pushing, check that API keys, passwords, `.env` files, virtual environments, and `node_modules` are not being uploaded.
+When using external AI services, review the relevant provider's privacy policy and terms before submitting sensitive research material.
 
-## Troubleshooting
+## 🛠️ Project Status
 
-### Python is not recognized
+ResearchFinderAI is an evolving project. Features, supported workflows, and setup instructions may change as development continues.
 
-Install Python from https://www.python.org/downloads/, enable **Add Python to PATH**, and reopen PowerShell.
+Contributions, suggestions, and bug reports are welcome.
 
-### Node.js or npm is not recognized
+## 📜 License
 
-Install Node.js LTS from https://nodejs.org/en/download and reopen PowerShell.
+No license has been specified yet. Reuse and redistribution permissions should be clarified by adding an appropriate license.
 
-### Vite is not recognized
+---
 
-Run these commands from the frontend directory:
-
-```powershell
-npm install
-npm run dev
-```
-
-### Backend dependency installation fails
-
-Verify that `backend\requirements.txt` exists and inspect the full error message.
-
-### Backend fails to start
-
-Check the backend terminal. Confirm that the FastAPI module name and application object match the `uvicorn` command.
-
-### Groq API errors
-
-Verify that the API key is configured correctly and that the selected model is available to your account.
-
-## License
-
-No license has been specified for this repository. Add a license file if you want to grant others explicit permission to reuse or modify the project.
+**ResearchFinderAI — Making research discovery more accessible.**
