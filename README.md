@@ -4,124 +4,138 @@
 
 ResearchFinderAI is an AI-assisted research discovery tool designed to help students, researchers, and academics explore research topics and discover relevant academic papers through a simple web interface.
 
-Instead of manually searching through hundreds of papers, ResearchFinderAI aims to make the research discovery process more organized and accessible.
+Run ResearchFinderAI directly in **Google Colab** without manually setting up Python and Node.js on your local computer.
 
-## ✨ What Can You Do With ResearchFinderAI?
+## ✨ Features
 
-- **Explore Research Topics:** Start exploring papers related to your research interests.
-- **Discover Relevant Papers:** Find potentially useful research papers for your chosen topic.
-- **AI-Assisted Analysis:** Use AI-powered analysis features available in the application to help review research information.
-- **Simple Web Interface:** Interact with the application through its frontend.
-- **Easy Local Setup:** Run the project on your own computer using the provided startup script.
+- **Research Discovery:** Explore academic papers related to your research interests.
+- **AI-Assisted Analysis:** Use available AI features to help analyze research information.
+- **Web Interface:** Access the application through a browser link generated in Google Colab.
+- **Cloud-Based Setup:** Run the project in a Colab runtime without installing the complete development environment locally.
 
-*Available features depend on the current implementation and configuration of the project.*
+*Available features depend on the current project implementation and configuration.*
 
-## 👥 Who Is It For?
+## 🚀 Getting Started with Google Colab
 
-ResearchFinderAI is designed for:
+### Step 1: Open Google Colab
 
-- University students looking for research ideas.
-- Undergraduate and postgraduate researchers exploring a new field.
-- Academics who want to investigate relevant literature.
-- Anyone beginning a research project and looking for related papers.
+Open Google Colab:
 
-## 🚀 Getting Started
+https://colab.research.google.com/
 
-### 1. Download the Project
+Create a new notebook.
 
-First, install Git if you do not already have it.
+### Step 2: Clone and Run ResearchFinderAI
 
-Download Git: https://git-scm.com/downloads
+Copy the following code into a Colab cell and run it.
 
-Open a terminal and run:
-
-```bash
-git clone https://github.com/mdmotalebmiraz7/ResearchFinderAI.git
-cd ResearchFinderAI
+```python
+!git clone https://github.com/mdmotalebmiraz7/ResearchFinderAI.git
+%cd ResearchFinderAI
+!bash run.sh
 ```
 
-Alternatively, open the repository on GitHub and select **Code → Download ZIP**.
+This downloads the repository and runs the startup script, which attempts to install dependencies and start the backend and frontend.
 
-### 2. Install the Required Software
+**Note:** The Colab runtime must have Python and Node.js/npm available. If startup fails, check the error output and the generated log files.
 
-Install the following tools:
+### Step 3: Open the Web Application
 
-| Software | Purpose | Download |
-|---|---|---|
-| Python | Runs the backend | https://www.python.org/downloads/ |
-| Node.js (LTS) | Runs the frontend tools | https://nodejs.org/en/download |
-| Git | Downloads and updates the project | https://git-scm.com/downloads |
+After the startup cell finishes, run this code in a **new Colab cell**:
 
-**Windows users:** During Python installation, enable **Add Python to PATH**.
+```python
+from google.colab.output import eval_js
+from IPython.display import display, HTML
 
-### 3. Configure the AI Service
+url = eval_js("google.colab.kernel.proxyPort(5173)")
 
-If your version of ResearchFinderAI uses Groq, you may need a Groq API key.
+display(HTML(f"""
+<div style="text-align:center; margin:30px 0;">
+    <a href="{url}" target="_blank"
+       style="
+           display:inline-block;
+           font-size:25px;
+           font-weight:bold;
+           padding:22px 30px;
+           background:#0d6efd;
+           color:white;
+           text-decoration:none;
+           border-radius:14px;
+       ">
+       🚀 Launch ResearchFinderAI
+    </a>
+    <p style="font-size:16px; margin-top:12px;">
+        Click the button above to open the research discovery application.
+    </p>
+</div>
+"""))
+```
 
-1. Create an account or sign in at https://console.groq.com/
-2. Visit https://console.groq.com/keys
-3. Create an API key.
-4. Configure it according to the application's instructions.
+Click **🚀 Launch ResearchFinderAI** to open the web interface.
 
-Keep your API key private. Never share it publicly or upload it to GitHub.
+The link is tied to your active Colab session. Keep the runtime running while using the application.
 
-### 4. Start ResearchFinderAI
+### Step 4: Configure AI Services (If Required)
 
-Open the project folder and double-click:
+If the application uses an external AI provider such as Groq, configure the required API key according to the project's backend instructions.
 
-`run.bat`
+For Groq:
 
-The startup script is intended to prepare the required dependencies, launch the backend and frontend, and open the application in your default browser.
+- Website: https://console.groq.com/
+- API keys: https://console.groq.com/keys
 
-If the browser does not open automatically, try:
+Keep your API key private. Do not hardcode secrets in a public notebook or commit them to GitHub. Use Colab Secrets or environment variables as appropriate for your implementation.
 
-http://localhost:5173
+## 🛠️ Troubleshooting
 
-Keep the backend and frontend terminal windows open while using the application.
+**The repository has already been cloned**
 
-## 💻 System Requirements
+If you run the cloning cell again in the same runtime, Git may report that the directory already exists. Use:
 
-You will need:
+```python
+%cd /content/ResearchFinderAI
+!bash run.sh
+```
 
-- A computer running Windows, or a compatible environment with the required tools installed.
-- An internet connection for initial setup, downloading dependencies, and any online research or AI services.
-- A valid API key if your selected AI features require one.
+**The web application does not open**
 
-Actual performance depends on your computer, network connection, and the services used by the application.
+Check whether the frontend started successfully:
 
-## ❓ Troubleshooting
+```python
+!cat frontend.log
+```
 
-**The application does not start**
+**The backend is not responding**
 
-Make sure Python and Node.js are installed correctly, then try running `run.bat` again. Check the terminal windows for error messages.
+Check the backend log:
 
-**The frontend does not open**
+```python
+!cat backend.log
+```
 
-Try opening http://localhost:5173 manually and confirm that the frontend terminal reports a successful startup.
+**Dependency installation fails**
 
-**AI features are not working**
+Review the error output from `run.sh`. Confirm that the required packages are listed in `backend/requirements.txt` and that Node.js/npm is available.
 
-Check your API key configuration, internet connection, and the availability of the configured AI model.
+**OpenAlex or another research API returns HTTP 429**
 
-**Installation fails**
+This usually indicates rate limiting. The API request logic may need retry handling, request throttling, and correct pagination.
 
-Check the error message and confirm that the project's dependencies have been installed successfully.
+## ⚠️ Important Notes
 
-## 🔒 Privacy and API Keys
+- Google Colab runtimes are temporary and may disconnect.
+- The application runs only while the required services and runtime remain active.
+- Internet access is needed to clone the repository, install dependencies, and access external APIs.
+- AI features may require API credentials and can be subject to provider usage limits.
+- Do not upload private API keys or sensitive research data to a public repository.
+- Actual functionality depends on the current implementation of ResearchFinderAI.
 
-Keep all secret credentials private. Do not commit API keys, passwords, or private environment files to a public repository.
+## 📜 Project Status
 
-When using external AI services, review the relevant provider's privacy policy and terms before submitting sensitive research material.
+ResearchFinderAI is an evolving project. Features and setup instructions may change as development continues.
 
-## 🛠️ Project Status
-
-ResearchFinderAI is an evolving project. Features, supported workflows, and setup instructions may change as development continues.
-
-Contributions, suggestions, and bug reports are welcome.
-
-## 📜 License
-
-No license has been specified yet. Reuse and redistribution permissions should be clarified by adding an appropriate license.
+**GitHub Repository:**  
+https://github.com/mdmotalebmiraz7/ResearchFinderAI
 
 ---
 
