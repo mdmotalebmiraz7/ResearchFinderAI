@@ -18,9 +18,21 @@ Run ResearchFinderAI directly in **Google Colab** without manually setting up Py
 
 ## 🎥 Project Video & Demo
 
-🎥 Project Demo
+## 🎥 ResearchFinderAI Demo
 
-▶️ Watch the ResearchFinderAI Demo on LinkedIn
+<p align="center">
+  <a href="https://www.linkedin.com/feed/update/urn:li:ugcPost:7514804105626750976/" target="_blank">
+    <img src="https://placehold.co/800x450/0A192F/FFFFFF?text=Watch+ResearchFinderAI+Demo"
+         alt="Watch ResearchFinderAI Demo on LinkedIn"
+         width="800">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.linkedin.com/feed/update/urn:li:ugcPost:7514804105626750976/">
+    ▶️ Watch Full Demo on LinkedIn
+  </a>
+</p>
 
 ## 🚀 Getting Started with Google Colab
 
