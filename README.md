@@ -14,7 +14,11 @@ Run ResearchFinderAI directly in **Google Colab** without manually setting up Py
 - **Cloud-Based Setup:** Run the project in a Colab runtime without installing the complete development environment locally.
 
 *Available features depend on the current project implementation and configuration.*
+🎥 Project Video & Demo
 
+Watch the video to learn more about ResearchFinderAI.
+
+<iframe src="https://www.linkedin.com/embed/feed/update/urn:li:ugcPost:7514804105626750976?compact=1" height="399" width="504" frameborder="0" allowfullscreen="" title="ResearchFinderAI Project Video"></iframe>
 ## 🚀 Getting Started with Google Colab
 
 ### Step 1: Open Google Colab
