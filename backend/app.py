@@ -718,11 +718,11 @@ Answer:
 
 def answer_question(question: str, question_llm) -> str:
     context = retrieve_text(question)
-    #if not context.strip():
-       # return "The provided context does not contain this information."
-    #chain = qa_prompt | question_llm | StrOutputParser()
-    #return chain.invoke({"context": context, "question": question})
-    return context
+    if not context.strip():
+        return "The provided context does not contain this information."
+    chain = qa_prompt | question_llm | StrOutputParser()
+    return chain.invoke({"context": context, "question": question})
+  
 
 # -------------------- API endpoints --------------------
 
