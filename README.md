@@ -44,6 +44,28 @@ https://colab.research.google.com/
 
 Create a new notebook.
 
+### Step 2: Enable GPU Runtime
+
+To run ResearchFinderAI efficiently, enable GPU in Google Colab.
+
+1. Click **Runtime** in the top menu.
+2. Select **Change runtime type**.
+3. Under **Hardware accelerator**, select **T4 GPU** (if available).
+4. Click **Save**.
+
+Now your notebook is configured to use a GPU, if one is assigned by Colab.
+
+### Step 3: Verify GPU Availability
+
+Run the following code in a notebook cell:
+
+```python
+!nvidia-smi
+```
+
+If a GPU is assigned, this command will display its details. GPU availability depends on your Colab plan and current resource limits.
+
+
 ### Step 2: Clone and Run ResearchFinderAI
 
 Copy the following code into a Colab cell and run it.
