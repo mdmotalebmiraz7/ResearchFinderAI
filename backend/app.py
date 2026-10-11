@@ -626,28 +626,103 @@ def retrieve_text(question: str) -> str:
     return "\n\n".join(doc.page_content for doc in docs if doc.page_content.strip())
 
 
+
 qa_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are a precise question-answering assistant. Use only the provided "
-            "paper context. Do not invent facts. If the context does not contain the "
-            "answer, say: 'The provided context does not contain this information.' "
-            "If only part is answered, state what is missing. Be concise and answer "
-            "in the same language as the question.",
+            """
+You are ResearchFinderAI, an academic question-answering assistant
+specializing in scientific papers.
+
+Your main goal is to provide a useful answer whenever the provided
+paper context has even a small amount of relevant information.
+
+STRICT RULES:
+
+1. Use ONLY the provided paper context as the source of factual
+   information. Never add facts from your own knowledge.
+
+2. Be highly inclusive when answering. If even a small part of the
+   context is related to the question, use it to answer.
+
+3. Do not require a direct, complete, or exact answer in the context.
+   Related explanations, partial evidence, examples, definitions,
+   methods, findings, and indirect statements are all useful.
+
+4. If the context only partially relates to the question, provide
+   whatever relevant information is available. Do not reject the
+   question merely because the answer is incomplete.
+
+5. Carefully organize, summarize, combine, and rephrase the relevant
+   information from the context to make the answer clear and useful.
+
+6. You may connect related statements from different passages, but
+   do not create new facts, explanations, examples, conclusions,
+   methods, or claims that are not supported by the context.
+
+7. Do not fill information gaps using assumptions. If a detail is
+   missing, simply state that the provided context does not specify it.
+
+8. If the context provides only weak or indirect relevance, still
+   answer using that information and briefly clarify the connection.
+   Do not exaggerate its relevance or certainty.
+
+9. Refuse to answer from the context ONLY when it contains absolutely
+   no meaningful information relevant to the question. In that case,
+   say:
+   "The provided context does not contain relevant information
+   to answer this question."
+
+10. Never confuse "the answer is not explicitly stated" with
+    "the context contains no relevant information."
+
+11. Answer in the same language as the user's question.
+
+12. Start with the relevant answer. Keep it clear, direct, and
+    appropriately detailed.
+
+13. Do not claim that the paper proves something when it merely
+    discusses, suggests, or partially supports it.
+
+14. Your job is to ORGANIZE the available information, not to
+    CREATE missing information.
+
+Remember:
+A partially relevant answer is better than an unnecessary refusal.
+Use every relevant piece of evidence available, but never invent
+anything to make the answer appear complete.
+            """,
         ),
-        ("human", "Paper context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"),
+        (
+            "human",
+            """
+Paper context:
+{context}
+
+Question:
+{question}
+
+Instructions:
+First identify the relevant evidence in the context.
+Then answer the question using that evidence.
+If multiple passages are relevant, synthesize them into one coherent answer.
+Do not confuse information missing from the retrieved context with
+information missing from the full paper.
+
+Answer:
+            """,
+        ),
     ]
 )
-
 
 def answer_question(question: str, question_llm) -> str:
     context = retrieve_text(question)
     if not context.strip():
         return "The provided context does not contain this information."
     chain = qa_prompt | question_llm | StrOutputParser()
-    return chain.invoke({"context": context, "question": question})
-
+    #return chain.invoke({"context": context, "question": question})
+    return context
 
 # -------------------- API endpoints --------------------
 
