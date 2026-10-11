@@ -17,7 +17,7 @@ Endpoints:
     POST /ask              {"question": "...", "api_key": "..."}
     GET  /docs
 """
-
+import torch
 import asyncio
 import logging
 import os
