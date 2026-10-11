@@ -653,6 +653,15 @@ def retrieve_text(question: str) -> str:
     return "\n\n".join(doc.page_content for doc in docs if doc.page_content.strip())
 
 
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+
+# ==========================================
+# 1. QUESTION REWRITE PROMPT
+# ==========================================
+
 question_rewrite_prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -676,8 +685,7 @@ STRICT RULES:
 7. Do not invent context or assume facts about the paper.
 8. Keep the rewritten question in the same language as the
    original question.
-9. For technical questions, preserve the relevant technical
-   terminology.
+9. For technical questions, preserve relevant terminology.
 10. Return ONLY the rewritten question, without explanations,
     labels, or quotation marks.
             """,
@@ -696,20 +704,24 @@ Rewritten question:
 
 
 def regenerate_question(question: str, question_llm) -> str:
-    """
-    Rewrite the user's question for better document retrieval.
-    The original question's intent must remain unchanged.
-    """
-    chain = question_rewrite_prompt | question_llm | StrOutputParser()
+    """Rewrite the user's question for document retrieval."""
 
-    rewritten = chain.invoke({"question": question}).strip()
+    chain = (
+        question_rewrite_prompt
+        | question_llm
+        | StrOutputParser()
+    )
 
-    # Fallback if regeneration returns an empty response.
+    rewritten = chain.invoke(
+        {"question": question}
+    ).strip()
+
+    # Fallback if rewriting returns an empty response.
     return rewritten if rewritten else question
 
 
 # ==========================================
-# 2. IMPROVED ANSWER PROMPT
+# 2. ANSWER PROMPT
 # ==========================================
 
 qa_prompt = ChatPromptTemplate.from_messages(
@@ -724,47 +736,45 @@ concepts, methods, architectures, experiments, and findings
 in a research paper without requiring them to read the
 entire paper.
 
-The user may want to understand only one particular topic.
-Focus on that topic and use all relevant evidence available
-in the provided context.
+Focus on the topic the user wants to understand and use all
+relevant evidence available in the retrieved context.
 
 STRICT RULES:
 
 1. Use the provided paper context as the source of claims
    about what the paper says, does, or reports.
 
-2. Be inclusive. Relevant evidence may be indirect, partial,
-   distributed across multiple passages, tables, or sections.
+2. Relevant evidence may be indirect, partial, or distributed
+   across multiple passages, tables, or sections.
 
-3. Synthesize related evidence from different passages to
+3. Combine related evidence from different passages to
    provide a coherent and sufficiently detailed answer.
 
-4. Explain the relevant concept clearly and organize the
-   answer into useful steps or sections when appropriate.
+4. Explain concepts clearly. Organize the answer into useful
+   steps or sections when appropriate.
 
 5. Distinguish between:
    - Information explicitly reported in the paper.
-   - Reasonable interpretations supported by the paper.
+   - Interpretations supported by the paper.
    - General explanations or suggestions not established
      by the paper.
 
-6. Do not attribute external knowledge, assumptions, or
+6. Never attribute external knowledge, assumptions, or
    recommendations to the paper.
 
 7. If the user asks for a general explanation of a concept,
-   you may explain it using general knowledge when useful,
-   but clearly distinguish that explanation from the
-   paper's own methods and findings.
+   you may use general knowledge when useful. Clearly
+   distinguish it from the paper's methods and findings.
 
-8. If a requested detail is not present in the provided
-   context, state that it is not specified in the available
-   context. Do not invent values, methods, results, or claims.
+8. If a requested detail is absent from the retrieved context,
+   state that it is not specified in the available context.
+   Do not invent values, methods, results, or claims.
 
 9. Do not confuse missing information in the retrieved
    context with missing information in the entire paper.
 
-10. If the context contains partially relevant evidence,
-    answer using that evidence and explain its limitations.
+10. If partially relevant evidence exists, answer using it
+    and explain its limitations.
 
 11. Refuse to answer from the context only when it contains
     no meaningful information relevant to the question.
@@ -775,17 +785,20 @@ STRICT RULES:
 12. Do not claim that the paper proves something when it
     merely discusses, suggests, or partially supports it.
 
-13. Answer in the same language as the user's original question.
+13. Answer in the same language as the ORIGINAL user question.
 
 14. Start with the direct answer. Provide enough detail to
-    help the user understand the requested topic, without
+    help the user understand the requested topic without
     adding irrelevant material.
 
 15. Never pretend that the retrieved passages represent
     the entire paper.
 
-Remember: Your task is to help the user understand the
-requested topic deeply while maintaining factual accuracy.
+16. The original user question determines what you must
+    answer. The rewritten question is only a retrieval aid.
+
+Your goal is to help the user understand the requested topic
+deeply while maintaining factual accuracy.
             """,
         ),
         (
@@ -801,14 +814,14 @@ Retrieved paper context:
 {context}
 
 Instructions:
-Answer the ORIGINAL user question.
+Answer the ORIGINAL user question, not a different question.
 
-Use the rewritten question only to understand the retrieval
-intent. Base paper-specific claims on the retrieved context.
+Use the rewritten question to understand the retrieval intent.
+Base paper-specific claims on the retrieved context.
 
 Combine relevant evidence from different passages when useful.
-Clearly distinguish paper-specific information from general
-explanations and identify details that are not specified.
+Distinguish paper-specific information from general explanations.
+Identify important details that are not specified in the context.
 
 Answer:
             """,
@@ -822,7 +835,8 @@ Answer:
 # ==========================================
 
 def answer_question(question: str, question_llm) -> str:
-    # Step 1: Regenerate the user's question
+
+    # Step 1: Rewrite the original question
     rewritten_question = regenerate_question(
         question,
         question_llm
@@ -839,10 +853,16 @@ def answer_question(question: str, question_llm) -> str:
 
     # Step 3: Generate the final answer
     chain = qa_prompt | question_llm | StrOutputParser()
-    return chain.invoke({
-        "context": context,
-        "question": rewritten_question
-    })
+
+    answer = chain.invoke(
+        {
+            "question": question,
+            "rewritten_question": rewritten_question,
+            "context": context,
+        }
+    )
+
+    return answer
 
 
 # -------------------- API endpoints --------------------
