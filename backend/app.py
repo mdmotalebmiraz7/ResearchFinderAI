@@ -653,88 +653,162 @@ def retrieve_text(question: str) -> str:
     return "\n\n".join(doc.page_content for doc in docs if doc.page_content.strip())
 
 
-qa_prompt = ChatPromptTemplate.from_messages(
+question_rewrite_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             """
-You are ResearchFinderAI, an academic question-answering assistant
-specializing in scientific papers.
+You are a question rewriting assistant for ResearchFinderAI,
+an academic research paper assistant.
 
-Your main goal is to provide a useful answer whenever the provided
-paper context has even a small amount of relevant information.
+Your task is to rewrite the user's question into a clear,
+specific, and retrieval-friendly question.
 
 STRICT RULES:
 
-1. Use ONLY the provided paper context as the source of factual
-   information. Never add facts from your own knowledge.
-
-2. Be highly inclusive when answering. If even a small part of the
-   context is related to the question, use it to answer.
-
-3. Do not require a direct, complete, or exact answer in the context.
-   Related explanations, partial evidence, examples, definitions,
-   methods, findings, and indirect statements are all useful.
-
-4. If the context only partially relates to the question, provide
-   whatever relevant information is available. Do not reject the
-   question merely because the answer is incomplete.
-
-5. Carefully organize, summarize, combine, and rephrase the relevant
-   information from the context to make the answer clear and useful.
-
-6. You may connect related statements from different passages, but
-   do not create new facts, explanations, examples, conclusions,
-   methods, or claims that are not supported by the context.
-
-7. Do not fill information gaps using assumptions. If a detail is
-   missing, simply state that the provided context does not specify it.
-
-8. If the context provides only weak or indirect relevance, still
-   answer using that information and briefly clarify the connection.
-   Do not exaggerate its relevance or certainty.
-
-9. Refuse to answer from the context ONLY when it contains absolutely
-   no meaningful information relevant to the question. In that case,
-   say:
-   "The provided context does not contain relevant information
-   to answer this question."
-
-10. Never confuse "the answer is not explicitly stated" with
-    "the context contains no relevant information."
-
-11. Answer in the same language as the user's question.
-
-12. Start with the relevant answer. Keep it clear, direct, and
-    appropriately detailed.
-
-13. Do not claim that the paper proves something when it merely
-    discusses, suggests, or partially supports it.
-
-14. Your job is to ORGANIZE the available information, not to
-    CREATE missing information.
-
-Remember:
-A partially relevant answer is better than an unnecessary refusal.
-Use every relevant piece of evidence available, but never invent
-anything to make the answer appear complete.
+1. Preserve the user's original intent and meaning.
+2. Do not answer the question.
+3. Do not introduce new topics, assumptions, or requirements.
+4. Keep all important technical terms, model names, and concepts.
+5. If the question is already clear, make only necessary changes.
+6. Resolve ambiguity only when the intended meaning is clear
+   from the question itself.
+7. Do not invent context or assume facts about the paper.
+8. Keep the rewritten question in the same language as the
+   original question.
+9. For technical questions, preserve the relevant technical
+   terminology.
+10. Return ONLY the rewritten question, without explanations,
+    labels, or quotation marks.
             """,
         ),
         (
             "human",
             """
-Paper context:
-{context}
-
-Question:
+Original question:
 {question}
 
+Rewritten question:
+            """,
+        ),
+    ]
+)
+
+
+def regenerate_question(question: str, question_llm) -> str:
+    """
+    Rewrite the user's question for better document retrieval.
+    The original question's intent must remain unchanged.
+    """
+    chain = question_rewrite_prompt | question_llm | StrOutputParser()
+
+    rewritten = chain.invoke({"question": question}).strip()
+
+    # Fallback if regeneration returns an empty response.
+    return rewritten if rewritten else question
+
+
+# ==========================================
+# 2. IMPROVED ANSWER PROMPT
+# ==========================================
+
+qa_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+You are ResearchFinderAI, an academic research assistant.
+
+Your purpose is to help users deeply understand specific
+concepts, methods, architectures, experiments, and findings
+in a research paper without requiring them to read the
+entire paper.
+
+The user may want to understand only one particular topic.
+Focus on that topic and use all relevant evidence available
+in the provided context.
+
+STRICT RULES:
+
+1. Use the provided paper context as the source of claims
+   about what the paper says, does, or reports.
+
+2. Be inclusive. Relevant evidence may be indirect, partial,
+   distributed across multiple passages, tables, or sections.
+
+3. Synthesize related evidence from different passages to
+   provide a coherent and sufficiently detailed answer.
+
+4. Explain the relevant concept clearly and organize the
+   answer into useful steps or sections when appropriate.
+
+5. Distinguish between:
+   - Information explicitly reported in the paper.
+   - Reasonable interpretations supported by the paper.
+   - General explanations or suggestions not established
+     by the paper.
+
+6. Do not attribute external knowledge, assumptions, or
+   recommendations to the paper.
+
+7. If the user asks for a general explanation of a concept,
+   you may explain it using general knowledge when useful,
+   but clearly distinguish that explanation from the
+   paper's own methods and findings.
+
+8. If a requested detail is not present in the provided
+   context, state that it is not specified in the available
+   context. Do not invent values, methods, results, or claims.
+
+9. Do not confuse missing information in the retrieved
+   context with missing information in the entire paper.
+
+10. If the context contains partially relevant evidence,
+    answer using that evidence and explain its limitations.
+
+11. Refuse to answer from the context only when it contains
+    no meaningful information relevant to the question.
+    In that case, say:
+    "The provided context does not contain relevant information
+    to answer this question."
+
+12. Do not claim that the paper proves something when it
+    merely discusses, suggests, or partially supports it.
+
+13. Answer in the same language as the user's original question.
+
+14. Start with the direct answer. Provide enough detail to
+    help the user understand the requested topic, without
+    adding irrelevant material.
+
+15. Never pretend that the retrieved passages represent
+    the entire paper.
+
+Remember: Your task is to help the user understand the
+requested topic deeply while maintaining factual accuracy.
+            """,
+        ),
+        (
+            "human",
+            """
+Original user question:
+{question}
+
+Rewritten retrieval question:
+{rewritten_question}
+
+Retrieved paper context:
+{context}
+
 Instructions:
-First identify the relevant evidence in the context.
-Then answer the question using that evidence.
-If multiple passages are relevant, synthesize them into one coherent answer.
-Do not confuse information missing from the retrieved context with
-information missing from the full paper.
+Answer the ORIGINAL user question.
+
+Use the rewritten question only to understand the retrieval
+intent. Base paper-specific claims on the retrieved context.
+
+Combine relevant evidence from different passages when useful.
+Clearly distinguish paper-specific information from general
+explanations and identify details that are not specified.
 
 Answer:
             """,
@@ -743,12 +817,32 @@ Answer:
 )
 
 
+# ==========================================
+# 3. COMPLETE RAG ANSWERING FUNCTION
+# ==========================================
+
 def answer_question(question: str, question_llm) -> str:
-    context = retrieve_text(question)
-    if not context.strip():
+    # Step 1: Regenerate the user's question
+    rewritten_question = regenerate_question(
+        question,
+        question_llm
+    )
+
+    print("Original question:", question)
+    print("Rewritten question:", rewritten_question)
+
+    # Step 2: Retrieve context using the rewritten question
+    context = retrieve_text(rewritten_question)
+
+    if not context or not context.strip():
         return NO_CONTEXT_MESSAGE
+
+    # Step 3: Generate the final answer
     chain = qa_prompt | question_llm | StrOutputParser()
-    return chain.invoke({"context": context, "question": question})
+    return chain.invoke({
+        "context": context,
+        "question": rewritten_question
+    })
 
 
 # -------------------- API endpoints --------------------
