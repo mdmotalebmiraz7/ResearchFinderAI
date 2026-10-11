@@ -1,10 +1,10 @@
-"""Research Finder API.
+"""Research Finder API (fixed).
 
 Run locally:
     pip install -r requirements.txt
     uvicorn research_finder:app --reload --host 0.0.0.0 --port 8000
 
-Run directly (including with `%run research_finder.py` in Colab):
+Run directly (terminal or Colab `%run research_finder.py`):
     python research_finder.py
 
 Endpoints:
@@ -17,22 +17,23 @@ Endpoints:
     POST /ask              {"question": "...", "api_key": "..."}
     GET  /docs
 """
-import torch
 import asyncio
-import logging
+import json
 import os
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, TypedDict
 
-import arxiv
 import fitz
 import requests
+import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from groq import Groq
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
@@ -54,17 +55,11 @@ YEAR_FROM = 2020
 PAPERS_PER_TOPIC = 100
 TITLE_TOP_K = 20
 FINAL_TOP_K = 10
-
-app = FastAPI(title="Research Finder API", version="1.0.1")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your frontend origin in production.
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+MAX_SEARCH_PAGES = 5
+NO_CONTEXT_MESSAGE = "The provided context does not contain relevant information to answer this question."
 
 # In-memory prototype storage. Results are lost when the server restarts.
+# NOTE: global state means one active session at a time (not multi-user safe).
 result = None
 selected_paper = None
 chunks: list[Document] = []
@@ -87,18 +82,53 @@ def add_log(message: str, level: str = "INFO") -> None:
     print(f"[{level}] {message}")
 
 
-# -------------------- Load models once --------------------
+semantic_model = None
+embeddings = None
+models_ready = threading.Event()
+model_error: str | None = None
 
-add_log("Loading semantic ranking model...")
-semantic_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
-add_log("Semantic ranking model loaded.")
 
-# Embeddings are used when a PDF is processed. This model may download weights
-# the first time the API starts, depending on the runtime's model cache.
-embeddings = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-base-en-v1.5",
-    model_kwargs={"device":DEVICE},
-    encode_kwargs={"normalize_embeddings": True},
+def load_models() -> None:
+    """Load heavy models in the background so the server starts answering /health at once."""
+    global semantic_model, embeddings, model_error
+    try:
+        add_log("Loading semantic ranking model...")
+        semantic_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
+        add_log("Semantic ranking model loaded. Loading embedding model...")
+        # This model may download weights the first time the API starts.
+        embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-base-en-v1.5",
+            model_kwargs={"device": DEVICE},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        models_ready.set()
+        add_log("All models loaded. Research Finder API is ready.")
+    except Exception as exc:
+        model_error = f"{type(exc).__name__}: {exc}"
+        add_log(f"Model loading failed: {model_error}", "ERROR")
+
+
+def require_models() -> None:
+    if model_error:
+        raise HTTPException(status_code=500, detail=f"Model loading failed: {model_error}")
+    if not models_ready.is_set():
+        raise HTTPException(status_code=503, detail="Models are still loading. Check /health and try again shortly.")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    add_log("Server started. Loading models in the background...")
+    threading.Thread(target=load_models, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Research Finder API", version="1.0.2", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Restrict to your frontend origin in production.
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -136,29 +166,20 @@ class WorkerState(TypedDict):
 
 class ResearchPlan(BaseModel):
     summary: str
-    titles: list[str] = Field(min_length=10, max_length=10)
+    titles: list[str]
 
 
 # -------------------- Paper search and ranking --------------------
 
-import requests
-
-
-def reconstruct_abstract(data):
+def reconstruct_abstract(data) -> str:
     if not data:
         return ""
-
     words = []
-
     for word, positions in data.items():
         for position in positions:
             words.append((position, word))
-
     words.sort()
-
-    return " ".join(
-        word for position, word in words
-    )
+    return " ".join(word for _, word in words)
 
 
 def search_papers(
@@ -166,16 +187,17 @@ def search_papers(
     search_limit: int = 100,
     year_from: int = 2020,
 ) -> list[dict]:
-
     if not query.strip():
         return []
 
     add_log(f"Searching OpenAlex for: {query}")
 
-    papers = []
+    papers: list[dict] = []
     cursor = "*"
+    pages = 0
 
-    while len(papers) < search_limit:
+    while len(papers) < search_limit and pages < MAX_SEARCH_PAGES:
+        pages += 1
         params = {
             "search": query,
             "filter": f"from_publication_date:{year_from}-01-01",
@@ -189,73 +211,56 @@ def search_papers(
                 params=params,
                 timeout=30,
             )
-
             response.raise_for_status()
             data = response.json()
-
         except requests.RequestException as exc:
-            add_log(
-                f"OpenAlex search failed for '{query}': {exc}",
-                "ERROR",
-            )
+            add_log(f"OpenAlex search failed for '{query}': {exc}", "ERROR")
             raise
 
-        for item in data["results"]:
-            title = item.get("title", "")
-
+        for item in data.get("results", []):
+            title = item.get("title") or ""
             if not title:
                 continue
 
             best_oa = item.get("best_oa_location") or {}
             primary = item.get("primary_location") or {}
 
-            pdf_url = (
-                best_oa.get("pdf_url")
-                or primary.get("pdf_url")
-            )
-
-            # PDF link na thakle skip
-            if not pdf_url:
+            pdf_url = best_oa.get("pdf_url") or primary.get("pdf_url")
+            if not pdf_url:  # skip papers without a PDF link
                 continue
 
-            doi = item.get("doi", "")
+            doi = item.get("doi") or ""
+            link = (
+                doi
+                or best_oa.get("landing_page_url")
+                or primary.get("landing_page_url")
+                or item.get("id", "")
+            )
 
-            papers.append({
-                "title": title,
-                "abstract": reconstruct_abstract(
-                    item.get("abstract_inverted_index")
-                ),
-                "year": item.get("publication_year"),
-                "citations": item.get("cited_by_count", 0),
-                "doi": doi,
-                "url": (
-                    doi
-                    or best_oa.get("landing_page_url")
-                    or primary.get("landing_page_url")
-                    or item.get("id", "")
-                ),
-                "link": (
-                    doi
-                    or best_oa.get("landing_page_url")
-                    or primary.get("landing_page_url")
-                    or item.get("id", "")
-                ),
-                "openalex_url": item.get("id", ""),
-                "pdf_url": pdf_url,
-            })
+            papers.append(
+                {
+                    "title": title,
+                    "abstract": reconstruct_abstract(item.get("abstract_inverted_index")),
+                    "year": item.get("publication_year"),
+                    "citations": item.get("cited_by_count", 0),
+                    "doi": doi,
+                    "url": link,
+                    "link": link,
+                    "openalex_url": item.get("id", ""),
+                    "pdf_url": pdf_url,
+                }
+            )
 
             if len(papers) >= search_limit:
                 break
 
-        add_log(f"Collected: {len(papers)} papers")
-
-        cursor = data["meta"].get("next_cursor")
-
+        cursor = (data.get("meta") or {}).get("next_cursor")
         if not cursor:
             break
 
     add_log(f"Found {len(papers)} papers for topic: {query}")
     return papers
+
 
 async def semantic_title_rank(
     papers: list[dict], query: str, top_k: int = TITLE_TOP_K
@@ -308,6 +313,7 @@ async def semantic_abstract_rank(
                     "abstract": paper.get("abstract", ""),
                     "year": paper.get("year"),
                     "doi": paper.get("doi", ""),
+                    "openalex_url": paper.get("openalex_url", ""),
                     "Semantic": float(scores[i]),
                 }
             )
@@ -317,75 +323,82 @@ async def semantic_abstract_rank(
 
 
 # -------------------- LangGraph research workflow --------------------
-from groq import Groq
+
+PLAN_SYSTEM_PROMPT = (
+    "You are a research assistant. "
+    "Create a concise research summary and exactly 10 distinct academic search topics. "
+    'Return ONLY a JSON object of the form {"summary": "...", "titles": ["...", ...]} '
+    "with exactly 10 strings in titles."
+)
+
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "titles": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["summary", "titles"],
+    "additionalProperties": False,
+}
+
+
+def _parse_plan(content: str) -> ResearchPlan:
+    data = json.loads(content)
+    summary = str(data.get("summary", "")).strip()
+    seen, titles = set(), []
+    for t in data.get("titles", []):
+        if isinstance(t, str) and t.strip() and t.strip().lower() not in seen:
+            seen.add(t.strip().lower())
+            titles.append(t.strip())
+    if not summary:
+        raise ValueError("The model returned an empty summary.")
+    if len(titles) < 10:
+        raise ValueError(f"Expected 10 research topics, got {len(titles)}.")
+    return ResearchPlan(summary=summary, titles=titles[:10])
+
+
 def generate_research_plan(idea: str, api_key: str) -> ResearchPlan:
     client = Groq(api_key=api_key)
+    # Try strict schema first, then fall back to plain JSON mode.
+    modes = ["json_schema", "json_schema", "json_object"]
+    last_error: Exception | None = None
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "summary": {"type": "string"},
-            "titles": {
-                "type": "array",
-                "items": {"type": "string"}
+    for attempt, mode in enumerate(modes, start=1):
+        if mode == "json_schema":
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"name": "research_plan", "strict": True, "schema": PLAN_SCHEMA},
             }
-        },
-        "required": ["summary", "titles"],
-        "additionalProperties": False
-    }
+        else:
+            response_format = {"type": "json_object"}
 
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a research assistant. "
-                    "Create a concise research summary and exactly "
-                    "10 distinct academic search topics. "
-                    "Return only the requested structured data."
-                )
-            },
-            {
-                "role": "user",
-                "content": f"Research idea:\n{idea}"
-            }
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "research_plan",
-                "strict": True,
-                "schema": schema
-            }
-        },
-        temperature=0.2,
-        max_completion_tokens=2500
-    )
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Research idea:\n{idea}"},
+                ],
+                response_format=response_format,
+                temperature=0.2,
+                max_completion_tokens=2500,
+            )
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("The model returned an empty response.")
+            return _parse_plan(content)
+        except Exception as exc:
+            last_error = exc
+            add_log(f"Research plan attempt {attempt} ({mode}) failed: {exc}", "WARNING")
 
-    content = response.choices[0].message.content
+    raise ValueError(f"Could not generate a research plan: {last_error}")
 
-    if not content:
-        raise ValueError("The model returned an empty response.")
 
-    plan = ResearchPlan.model_validate_json(content)
+def generate(state: State) -> dict:
+    plan = generate_research_plan(state["idea"], state["api_key"])
+    return {"summary": plan.summary, "titles": plan.titles}
 
-    if len(plan.titles) != 10:
-        raise ValueError(
-            f"Expected 10 research topics, got {len(plan.titles)}"
-        )
 
-    return plan
-def generate(state):
-    idea = state["idea"]
-    api_key = state["api_key"]
-
-    plan = generate_research_plan(idea, api_key)
-
-    return {
-        "summary": plan.summary,
-        "titles": plan.titles,
-    }
 def dispatch_search(state: State):
     return [
         Send(
@@ -395,18 +408,24 @@ def dispatch_search(state: State):
         for title in state["titles"]
     ]
 
+
 async def process_title(state: WorkerState) -> dict:
     title = state["title"]
-    papers = await asyncio.to_thread(search_papers, title, PAPERS_PER_TOPIC, YEAR_FROM)
+    try:
+        papers = await asyncio.to_thread(search_papers, title, PAPERS_PER_TOPIC, YEAR_FROM)
+    except Exception as exc:
+        # One failing topic must not kill the whole research run.
+        add_log(f"Skipping topic '{title}': {exc}", "WARNING")
+        return {"search_results": [[]]}
     ranked = await semantic_title_rank(papers, title, TITLE_TOP_K)
     return {"search_results": [ranked]}
 
 
 def collect_unique_papers(state: State) -> dict:
-    unique = {}
+    unique: dict[str, dict] = {}
     for topic_results in state["search_results"]:
         for paper in topic_results:
-            url = paper.get("url") or paper.get("link") or ""
+            url = paper.get("url") or paper.get("link") or paper.get("openalex_url") or ""
             if url and url not in unique:
                 unique[url] = paper.copy()
     papers = list(unique.values())
@@ -435,17 +454,18 @@ builder.add_edge("process_abstract", END)
 graph = builder.compile()
 
 
-
 # -------------------- Robust PDF fetching (proxy + cache) --------------------
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
 PDF_CACHE_LIMIT = 8
 pdf_cache: dict[str, bytes] = {}
-pdf_lock = threading.Lock()
+pdf_lock = threading.Lock()  # protects only the cache dict, never held during downloads
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+# Set UNPAYWALL_EMAIL in your environment. Unpaywall is skipped if it is empty.
+UNPAYWALL_EMAIL = os.environ.get("UNPAYWALL_EMAIL", "")
 
 
 def _clean_pdf_url(url: str) -> str:
@@ -484,10 +504,12 @@ def _download_pdf(url: str) -> bytes:
             for part in response.iter_content(chunk_size=65536):
                 data.extend(part)
                 if len(data) > MAX_PDF_BYTES:
+                    response.close()
                     raise ValueError("PDF is larger than the 50 MB limit.")
+            final_url = response.url
             response.close()
 
-            if data[:1024].lstrip()[:5] == b"%PDF-" or b"%PDF-" in data[:1024]:
+            if b"%PDF-" in data[:1024]:
                 return bytes(data)
 
             # Got an HTML landing page: look for the real PDF link in its meta tags.
@@ -497,18 +519,17 @@ def _download_pdf(url: str) -> bytes:
                 html,
                 re.I,
             )
-            if meta and meta.group(1) != url:
-                url = requests.compat.urljoin(response.url, meta.group(1))
-                last_error = "landing page, following citation_pdf_url"
-                continue
+            if meta:
+                new_url = requests.compat.urljoin(final_url, meta.group(1))
+                if new_url != url:
+                    url = new_url
+                    last_error = "landing page, following citation_pdf_url"
+                    continue
             raise ValueError("The link did not return a PDF (it returned a web page).")
         except requests.RequestException as exc:
             last_error = str(exc)
             time.sleep(1.5 * (attempt + 1))
     raise ValueError(f"Could not download the PDF: {last_error}")
-
-
-UNPAYWALL_EMAIL = os.environ.get("UNPAYWALL_EMAIL", "mdmotalebmiraz7@gmail.com")
 
 
 def _norm_doi(doi: str) -> str:
@@ -536,10 +557,11 @@ def fallback_pdf_urls(paper: dict) -> list[str]:
     if arx:
         urls.append(f"https://arxiv.org/pdf/{arx.group(1)}")
     if doi:
-        data = _api_json(f"https://api.unpaywall.org/v2/{doi}", email=UNPAYWALL_EMAIL)
-        if data:
-            locs = [data.get("best_oa_location")] + (data.get("oa_locations") or [])
-            urls += [l.get("url_for_pdf") for l in locs if l and l.get("url_for_pdf")]
+        if UNPAYWALL_EMAIL:
+            data = _api_json(f"https://api.unpaywall.org/v2/{doi}", email=UNPAYWALL_EMAIL)
+            if data:
+                locs = [data.get("best_oa_location")] + (data.get("oa_locations") or [])
+                urls += [loc.get("url_for_pdf") for loc in locs if loc and loc.get("url_for_pdf")]
         data = _api_json(f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}", fields="openAccessPdf")
         if data and (data.get("openAccessPdf") or {}).get("url"):
             urls.append(data["openAccessPdf"]["url"])
@@ -559,41 +581,46 @@ def fallback_pdf_urls(paper: dict) -> list[str]:
 def get_pdf_bytes(paper: dict) -> bytes:
     """Return cached PDF bytes. Tries the main link, then alternative open-access copies."""
     primary = _clean_pdf_url(paper.get("pdf_url", ""))
+    cache_key = primary or paper.get("openalex_url") or paper.get("title", "")
+
     with pdf_lock:
-        if primary in pdf_cache:
-            return pdf_cache[primary]
-        errors: list[str] = []
-        data = None
-        tried: set[str] = set()
+        cached = pdf_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
-        def attempt(u: str) -> bool:
-            nonlocal data
-            if not u or u in tried:
-                return False
-            tried.add(u)
-            try:
-                data = _download_pdf(u)
-                return True
-            except Exception as exc:
-                host = re.sub(r"^https?://([^/]+).*", r"\1", u)
-                errors.append(f"{host}: {exc}")
-                add_log(f"PDF source failed ({host}): {exc}", "WARNING")
-                return False
+    errors: list[str] = []
+    tried: set[str] = set()
 
-        if not attempt(primary):
-            for alt in fallback_pdf_urls(paper):
-                if attempt(alt):
-                    add_log(f"PDF fetched from alternative source: {alt}")
-                    break
-        if data is None:
-            raise ValueError("All PDF sources failed. " + " | ".join(errors[:4]))
+    def attempt(u: str) -> bytes | None:
+        if not u or u in tried:
+            return None
+        tried.add(u)
+        try:
+            return _download_pdf(u)
+        except Exception as exc:
+            host = re.sub(r"^https?://([^/]+).*", r"\1", u)
+            errors.append(f"{host}: {exc}")
+            add_log(f"PDF source failed ({host}): {exc}", "WARNING")
+            return None
+
+    data = attempt(primary)
+    if data is None:
+        for alt in fallback_pdf_urls(paper):
+            data = attempt(alt)
+            if data is not None:
+                add_log(f"PDF fetched from alternative source: {alt}")
+                break
+    if data is None:
+        raise ValueError("All PDF sources failed. " + " | ".join(errors[:4]))
+
+    with pdf_lock:
         if len(pdf_cache) >= PDF_CACHE_LIMIT:
             pdf_cache.pop(next(iter(pdf_cache)))
-        pdf_cache[primary] = data
-        return data
+        pdf_cache[cache_key] = data
+    return data
 
 
-def find_paper(rank: int):
+def find_paper(rank: int) -> dict:
     if result is None:
         raise HTTPException(status_code=400, detail="Run a research search first.")
     paper = next((p for p in result["final_results"] if p.get("Rank") == rank), None)
@@ -607,11 +634,11 @@ def find_paper(rank: int):
 def extract_pdf_chunks(pdf_bytes: bytes) -> tuple[int, list[Document]]:
     pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
-        page_docs = [
-            Document(page_content=page.get_text(), metadata={"page": i + 1})
-            for i, page in enumerate(pdf)
-            if page.get_text().strip()
-        ]
+        page_docs = []
+        for i, page in enumerate(pdf):
+            text = page.get_text()
+            if text.strip():
+                page_docs.append(Document(page_content=text, metadata={"page": i + 1}))
     finally:
         pdf.close()
 
@@ -624,7 +651,6 @@ def retrieve_text(question: str) -> str:
         return ""
     docs = retriever.invoke(question)
     return "\n\n".join(doc.page_content for doc in docs if doc.page_content.strip())
-
 
 
 qa_prompt = ChatPromptTemplate.from_messages(
@@ -716,19 +742,25 @@ Answer:
     ]
 )
 
+
 def answer_question(question: str, question_llm) -> str:
     context = retrieve_text(question)
     if not context.strip():
-        return "The provided context does not contain this information."
+        return NO_CONTEXT_MESSAGE
     chain = qa_prompt | question_llm | StrOutputParser()
     return chain.invoke({"context": context, "question": question})
-  
+
 
 # -------------------- API endpoints --------------------
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Research Finder API is running."}
+    return {
+        "status": "error" if model_error else ("ok" if models_ready.is_set() else "loading"),
+        "models_ready": models_ready.is_set(),
+        "model_error": model_error,
+        "message": "Research Finder API is running.",
+    }
 
 
 @app.get("/logs")
@@ -740,9 +772,10 @@ async def get_logs():
 @app.post("/research")
 async def run_research(request: ResearchRequest):
     global result, selected_paper, chunks, vector_store, retriever
+    require_models()
     add_log(f"Research started: {request.idea}")
     try:
-        result = await graph.ainvoke(
+        new_result = await graph.ainvoke(
             {
                 "idea": request.idea,
                 "api_key": request.api_key,
@@ -753,6 +786,7 @@ async def run_research(request: ResearchRequest):
                 "final_results": [],
             }
         )
+        result = new_result
         selected_paper = None
         chunks = []
         vector_store = None
@@ -770,14 +804,7 @@ async def run_research(request: ResearchRequest):
 
 @app.post("/paper")
 async def get_paper(request: RankRequest):
-    if result is None:
-        raise HTTPException(status_code=400, detail="Run a research search first.")
-    paper = next(
-        (paper for paper in result["final_results"] if paper.get("Rank") == request.rank),
-        None,
-    )
-    if paper is None:
-        raise HTTPException(status_code=404, detail="Paper rank not found.")
+    paper = find_paper(request.rank)
     return {
         "Rank": paper["Rank"],
         "title": paper.get("title", ""),
@@ -790,8 +817,7 @@ async def get_paper(request: RankRequest):
 async def paper_pdf(rank: int):
     """Serve the paper PDF from our own origin so the iframe is never blocked."""
     paper = find_paper(rank)
-    pdf_url = paper.get("pdf_url", "")
-    if not pdf_url:
+    if not paper.get("pdf_url", ""):
         raise HTTPException(status_code=400, detail="PDF URL is not available.")
     try:
         pdf_bytes = await asyncio.to_thread(get_pdf_bytes, paper)
@@ -808,18 +834,10 @@ async def paper_pdf(rank: int):
 @app.post("/paper/process")
 async def process_selected_paper(request: RankRequest):
     global selected_paper, chunks, vector_store, retriever
-    if result is None:
-        raise HTTPException(status_code=400, detail="Run a research search first.")
+    require_models()
+    paper = find_paper(request.rank)
 
-    paper = next(
-        (paper for paper in result["final_results"] if paper.get("Rank") == request.rank),
-        None,
-    )
-    if paper is None:
-        raise HTTPException(status_code=404, detail="Paper rank not found.")
-
-    pdf_url = paper.get("pdf_url", "")
-    if not pdf_url:
+    if not paper.get("pdf_url", ""):
         raise HTTPException(status_code=400, detail="PDF URL is not available.")
 
     add_log(f"Downloading PDF for rank {request.rank}: {paper.get('title', '')}")
@@ -832,7 +850,10 @@ async def process_selected_paper(request: RankRequest):
         new_vector_store = await asyncio.to_thread(FAISS.from_documents, new_chunks, embeddings)
         chunks = new_chunks
         vector_store = new_vector_store
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+        retriever = vector_store.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 8, "fetch_k": 24},
+        )
         selected_paper = paper
         add_log(f"PDF processed: {total_pages} pages, {len(chunks)} chunks.")
         return {
@@ -860,33 +881,18 @@ async def ask_question_endpoint(request: QuestionRequest):
         raise HTTPException(status_code=500, detail=f"Failed to answer the question: {exc}") from exc
 
 
-@app.on_event("startup")
-async def startup_message():
-    add_log("Research Finder API is ready.")
-
-
+# -------------------- Entry point --------------------
 
 if __name__ == "__main__":
-    import asyncio
-    import threading
-    import uvicorn
+    try:
+        asyncio.get_running_loop()
+        in_notebook = True  # Colab / Jupyter already run an event loop.
+    except RuntimeError:
+        in_notebook = False
 
-    config = uvicorn.Config(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
-    )
-
-    server = uvicorn.Server(config)
-
-    def start_server():
-        asyncio.run(server.serve())
-
-    thread = threading.Thread(
-        target=start_server,
-        daemon=True,
-    )
-    thread.start()
-
-    print("FastAPI server is starting on port 8000...")
+    if in_notebook:
+        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info"))
+        threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True).start()
+        print("FastAPI server is starting on port 8000...")
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
