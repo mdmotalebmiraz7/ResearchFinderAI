@@ -64,7 +64,7 @@ Run the following code in a notebook cell:
 ```
 
 If a GPU is assigned, this command will display its details. GPU availability depends on your Colab plan and current resource limits.
-
+**Note:** ResearchFinderAI can also run on a CPU, but execution will be significantly slower than on a GPU.
 
 ### Step 2: Clone and Run ResearchFinderAI
 
