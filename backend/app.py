@@ -47,7 +47,7 @@ from sentence_transformers import SentenceTransformer, util
 
 
 # -------------------- Configuration --------------------
-
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_NAME = "openai/gpt-oss-20b"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 YEAR_FROM = 2020
@@ -90,14 +90,14 @@ def add_log(message: str, level: str = "INFO") -> None:
 # -------------------- Load models once --------------------
 
 add_log("Loading semantic ranking model...")
-semantic_model = SentenceTransformer(EMBEDDING_MODEL)
+semantic_model = SentenceTransformer(EMBEDDING_MODEL, device=DEVICE)
 add_log("Semantic ranking model loaded.")
 
 # Embeddings are used when a PDF is processed. This model may download weights
 # the first time the API starts, depending on the runtime's model cache.
 embeddings = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-small-en-v1.5",
-    model_kwargs={"device": "cpu"},
+    model_name="BAAI/bge-base-en-v1.5",
+    model_kwargs={"device":DEVICE},
     encode_kwargs={"normalize_embeddings": True},
 )
 
